@@ -1,0 +1,1199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Fantasy 5 Backtest Lab</title>
+<!--
+  CHANGELOG (bump APP_VERSION below on every revision, oldest first)
+  v1.0  Initial build: parser, 5 strategies, walk-forward backtest, Wilson CI vs chance baseline
+  v1.1  Added window.storage persistence for pasted draw data (auto-save/auto-load)
+  v1.2  Added Number Frequency section with bar chart + current top-5 pick callout
+  v1.3  Added Blended (Hot 40 / Cold 20 / Recency 40) strategy; threshold dropdown extended to ge4 and all-5
+  v1.4  Added version number to the masthead headline
+  v1.5  Added Day-of-month seasonal and Day-of-week-by-month seasonal strategies, plus a
+        Calendar Patterns section (bar charts + month x weekday heatmap); date parsing
+        rewritten to be timezone-safe so day-of-month/weekday are always computed correctly
+  v1.6  Day-of-week seasonal simplified to condition on weekday alone (all Mondays, not just
+        Mondays in a given month); month x weekday heatmap kept for reference only
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Spectral:ital,wght@0,400;0,500;0,600;0,700;1,400&family=IBM+Plex+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --paper:#F6F3EA;
+    --grid:rgba(27,42,74,0.07);
+    --grid-strong:rgba(27,42,74,0.13);
+    --ink:#1B2A4A;
+    --ink-soft:#4A5670;
+    --ink-faint:#7C879C;
+    --stamp-red:#B23A2E;
+    --stamp-green:#3F6B4A;
+    --highlight:#C9A227;
+    --line:#D9D3C1;
+    --card:#FBF9F3;
+    --card-border:#E4DFCF;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    background:
+      linear-gradient(var(--grid) 1px, transparent 1px) 0 0/28px 28px,
+      linear-gradient(90deg, var(--grid) 1px, transparent 1px) 0 0/28px 28px,
+      var(--paper);
+    color:var(--ink);
+    font-family:'Inter',-apple-system,BlinkMacSystemFont,sans-serif;
+    padding:0 0 80px 0;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:920px;margin:0 auto;padding:44px 24px 0;}
+
+  /* ---- Header / masthead ---- */
+  .masthead{
+    border-bottom:2px solid var(--ink);
+    padding-bottom:20px;
+    margin-bottom:8px;
+    display:flex;
+    justify-content:space-between;
+    align-items:flex-end;
+    flex-wrap:wrap;
+    gap:12px;
+  }
+  .eyebrow{
+    font-family:'IBM Plex Mono',monospace;
+    font-size:11px;
+    letter-spacing:.14em;
+    text-transform:uppercase;
+    color:var(--ink-soft);
+    margin:0 0 6px;
+  }
+  h1{
+    font-family:'Spectral',serif;
+    font-weight:700;
+    font-size:clamp(30px,5vw,44px);
+    line-height:1.02;
+    margin:0;
+    letter-spacing:-0.01em;
+    display:flex;
+    align-items:baseline;
+    gap:12px;
+    flex-wrap:wrap;
+  }
+  .version-badge{
+    font-family:'IBM Plex Mono',monospace;
+    font-weight:600;
+    font-size:12px;
+    letter-spacing:.04em;
+    color:var(--ink-soft);
+    background:var(--grid-strong);
+    border:1px solid var(--card-border);
+    padding:3px 8px;
+    border-radius:3px;
+    vertical-align:middle;
+  }
+  .masthead-right{
+    font-family:'IBM Plex Mono',monospace;
+    font-size:11px;
+    color:var(--ink-faint);
+    text-align:right;
+    line-height:1.6;
+  }
+  .subhead{
+    font-family:'Spectral',serif;
+    font-style:italic;
+    font-size:17px;
+    color:var(--ink-soft);
+    margin:14px 0 40px;
+    max-width:640px;
+  }
+
+  /* ---- Section headers ---- */
+  .section{margin-bottom:52px;}
+  .section-label{
+    display:flex;
+    align-items:center;
+    gap:12px;
+    margin-bottom:18px;
+  }
+  .section-num{
+    font-family:'IBM Plex Mono',monospace;
+    font-size:12px;
+    color:var(--paper);
+    background:var(--ink);
+    padding:3px 8px;
+    letter-spacing:.06em;
+  }
+  .section-title{
+    font-family:'Spectral',serif;
+    font-weight:600;
+    font-size:20px;
+    letter-spacing:-0.005em;
+  }
+  .section-line{flex:1;height:1px;background:var(--line);}
+
+  p{line-height:1.6;color:var(--ink-soft);}
+
+  /* ---- Data input panel ---- */
+  .panel{
+    background:var(--card);
+    border:1px solid var(--card-border);
+    padding:24px;
+  }
+  textarea{
+    width:100%;
+    min-height:150px;
+    font-family:'IBM Plex Mono',monospace;
+    font-size:12.5px;
+    line-height:1.6;
+    background:#fff;
+    border:1px solid var(--card-border);
+    padding:12px;
+    color:var(--ink);
+    resize:vertical;
+  }
+  textarea:focus{outline:2px solid var(--ink); outline-offset:1px;}
+  .field-label{
+    font-family:'IBM Plex Mono',monospace;
+    font-size:11px;
+    letter-spacing:.08em;
+    text-transform:uppercase;
+    color:var(--ink-soft);
+    display:block;
+    margin-bottom:8px;
+  }
+  .hint{font-size:12.5px; color:var(--ink-faint); margin-top:8px; line-height:1.55;}
+  .hint code{background:var(--grid-strong); padding:1px 5px; font-family:'IBM Plex Mono',monospace;}
+
+  .btn-row{display:flex; gap:10px; flex-wrap:wrap; margin-top:16px; align-items:center;}
+  button{
+    font-family:'IBM Plex Mono',monospace;
+    font-size:12px;
+    letter-spacing:.04em;
+    text-transform:uppercase;
+    padding:11px 18px;
+    border:1px solid var(--ink);
+    background:transparent;
+    color:var(--ink);
+    cursor:pointer;
+    transition:background .12s, color .12s;
+  }
+  button:hover{background:var(--ink); color:var(--paper);}
+  button.primary{background:var(--ink); color:var(--paper);}
+  button.primary:hover{background:var(--stamp-red); border-color:var(--stamp-red); color:#fff;}
+  button:disabled{opacity:.4; cursor:not-allowed;}
+  button:disabled:hover{background:transparent; color:var(--ink);}
+
+  .status-line{
+    font-family:'IBM Plex Mono',monospace;
+    font-size:12px;
+    color:var(--ink-soft);
+    margin-left:4px;
+  }
+  .status-line.err{color:var(--stamp-red);}
+  .status-line.ok{color:var(--stamp-green);}
+
+  select, input[type=number]{
+    font-family:'IBM Plex Mono',monospace;
+    font-size:12px;
+    padding:8px 10px;
+    border:1px solid var(--ink);
+    background:#fff;
+    color:var(--ink);
+  }
+
+  /* ---- Baseline math panel ---- */
+  .baseline-grid{
+    display:grid;
+    grid-template-columns:repeat(auto-fit,minmax(150px,1fr));
+    gap:1px;
+    background:var(--card-border);
+    border:1px solid var(--card-border);
+  }
+  .baseline-cell{
+    background:var(--card);
+    padding:16px 14px;
+  }
+  .baseline-cell .k{
+    font-family:'IBM Plex Mono',monospace;
+    font-size:10.5px;
+    letter-spacing:.08em;
+    text-transform:uppercase;
+    color:var(--ink-faint);
+    margin-bottom:6px;
+  }
+  .baseline-cell .v{
+    font-family:'IBM Plex Mono',monospace;
+    font-size:24px;
+    font-weight:600;
+    color:var(--ink);
+  }
+  .callout{
+    border-left:3px solid var(--highlight);
+    background:rgba(201,162,39,0.08);
+    padding:14px 18px;
+    margin-top:16px;
+    font-size:14px;
+    line-height:1.6;
+    color:var(--ink);
+  }
+  .callout b{color:var(--ink);}
+
+  /* ---- Strategy cards ---- */
+  .strategy-grid{display:flex; flex-direction:column; gap:16px;}
+  .strategy-card{
+    position:relative;
+    background:var(--card);
+    border:1px solid var(--card-border);
+    padding:22px 24px;
+    overflow:hidden;
+  }
+  .strategy-head{
+    display:flex;
+    justify-content:space-between;
+    align-items:baseline;
+    gap:16px;
+    flex-wrap:wrap;
+    margin-bottom:6px;
+  }
+  .strategy-name{
+    font-family:'Spectral',serif;
+    font-weight:600;
+    font-size:18px;
+  }
+  .strategy-method{
+    font-size:13px;
+    color:var(--ink-faint);
+    margin:0 0 16px;
+    max-width:560px;
+  }
+  .stat-row{
+    display:grid;
+    grid-template-columns:repeat(4,1fr);
+    gap:18px;
+    margin-bottom:14px;
+  }
+  @media(max-width:640px){ .stat-row{grid-template-columns:repeat(2,1fr);} }
+  .stat{border-top:1px solid var(--line); padding-top:8px;}
+  .stat .k{
+    font-family:'IBM Plex Mono',monospace;
+    font-size:10px;
+    letter-spacing:.07em;
+    text-transform:uppercase;
+    color:var(--ink-faint);
+    margin-bottom:4px;
+  }
+  .stat .v{
+    font-family:'IBM Plex Mono',monospace;
+    font-size:21px;
+    font-weight:600;
+  }
+  .stat .sub{font-family:'IBM Plex Mono',monospace; font-size:11px; color:var(--ink-faint);}
+
+  .verdict-row{
+    display:flex;
+    align-items:center;
+    gap:10px;
+    margin-top:14px;
+    font-family:'IBM Plex Mono',monospace;
+    font-size:11.5px;
+  }
+  .dot{width:8px; height:8px; border-radius:50%; flex:none;}
+  .dot.neutral{background:var(--ink-faint);}
+  .dot.red{background:var(--stamp-red);}
+  .dot.green{background:var(--stamp-green);}
+
+  .distbar-wrap{margin-top:16px;}
+
+  /* ---- Frequency chart ---- */
+  .freq-chart{
+    display:flex;
+    align-items:flex-end;
+    gap:3px;
+    height:140px;
+    padding:12px 8px 0;
+    background:var(--card);
+    border:1px solid var(--card-border);
+    overflow-x:auto;
+  }
+  .freq-bar-col{
+    flex:1;
+    min-width:14px;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    height:100%;
+    justify-content:flex-end;
+  }
+  .freq-bar{
+    width:100%;
+    background:var(--ink-faint);
+    min-height:2px;
+  }
+  .freq-bar.top5{
+    background:var(--highlight);
+  }
+  .freq-label{
+    font-family:'IBM Plex Mono',monospace;
+    font-size:9px;
+    color:var(--ink-faint);
+    margin-top:4px;
+    writing-mode:horizontal-tb;
+  }
+  .freq-label.top5{ color:#8a6d10; font-weight:700; }
+  .freq-pick-numbers{
+    display:flex;
+    gap:8px;
+    margin:14px 0;
+  }
+  .freq-pick-ball{
+    width:38px; height:38px;
+    border-radius:50%;
+    background:var(--ink);
+    color:var(--paper);
+    display:flex; align-items:center; justify-content:center;
+    font-family:'IBM Plex Mono',monospace;
+    font-weight:700;
+    font-size:15px;
+  }
+
+  /* ---- Calendar patterns panels ---- */
+  .panel-subhead{
+    font-family:'IBM Plex Mono',monospace;
+    font-size:11px;
+    letter-spacing:.08em;
+    text-transform:uppercase;
+    color:var(--ink);
+    margin:0 0 10px;
+    border-bottom:1px solid var(--line);
+    padding-bottom:6px;
+  }
+  .dow-chart{
+    display:flex;
+    align-items:flex-end;
+    gap:10px;
+    height:120px;
+    padding:12px 8px 0;
+    background:var(--card);
+    border:1px solid var(--card-border);
+  }
+  .dow-bar-col{
+    flex:1;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    height:100%;
+    justify-content:flex-end;
+  }
+  .dow-bar{
+    width:100%;
+    max-width:44px;
+    background:var(--ink-soft);
+    min-height:2px;
+  }
+  .dow-label{
+    font-family:'IBM Plex Mono',monospace;
+    font-size:10.5px;
+    color:var(--ink-faint);
+    margin-top:6px;
+  }
+  .dow-count{
+    font-family:'IBM Plex Mono',monospace;
+    font-size:9.5px;
+    color:var(--ink-faint);
+    margin-bottom:3px;
+  }
+  .heatmap{
+    display:grid;
+    grid-template-columns:44px repeat(7,1fr);
+    gap:2px;
+    background:var(--card-border);
+    border:1px solid var(--card-border);
+    font-family:'IBM Plex Mono',monospace;
+    font-size:10px;
+  }
+  .heatmap-cell{
+    background:var(--card);
+    padding:6px 2px;
+    text-align:center;
+    color:var(--ink-soft);
+  }
+  .heatmap-cell.head{
+    background:var(--ink);
+    color:var(--paper);
+    font-weight:600;
+  }
+  .heatmap-cell.rowhead{
+    background:var(--ink);
+    color:var(--paper);
+    text-align:left;
+    padding-left:6px;
+    font-weight:600;
+  }
+  .distbar-row{display:flex; align-items:center; gap:8px; margin-bottom:5px;}
+  .distbar-label{
+    width:64px; flex:none;
+    font-family:'IBM Plex Mono',monospace;
+    font-size:10.5px; color:var(--ink-faint);
+  }
+  .distbar-track{flex:1; height:14px; background:var(--grid-strong); position:relative;}
+  .distbar-fill{height:100%; background:var(--ink-soft);}
+  .distbar-theory{
+    position:absolute; top:-3px; bottom:-3px; width:2px; background:var(--stamp-red);
+  }
+
+  .stamp{
+    position:absolute;
+    top:14px; right:-38px;
+    transform:rotate(9deg);
+    border:3px solid var(--stamp-red);
+    color:var(--stamp-red);
+    font-family:'IBM Plex Mono',monospace;
+    font-weight:700;
+    font-size:12px;
+    letter-spacing:.06em;
+    text-transform:uppercase;
+    padding:5px 46px;
+    opacity:.85;
+    pointer-events:none;
+    background:rgba(178,58,46,0.04);
+  }
+  @media(max-width:640px){ .stamp{font-size:10px; padding:4px 30px; right:-30px;} }
+
+  .stamp.watch{
+    border-color:var(--highlight);
+    color:#8a6d10;
+    background:rgba(201,162,39,0.05);
+  }
+
+  /* ---- Methodology / footer ---- */
+  .method-note{
+    font-size:13px;
+    line-height:1.65;
+    color:var(--ink-soft);
+    border-top:1px solid var(--line);
+    padding-top:20px;
+  }
+  .method-note h4{
+    font-family:'IBM Plex Mono',monospace;
+    font-size:11px;
+    letter-spacing:.08em;
+    text-transform:uppercase;
+    color:var(--ink);
+    margin:20px 0 6px;
+  }
+  .method-note h4:first-child{margin-top:0;}
+
+  .empty-state{
+    font-family:'IBM Plex Mono',monospace;
+    font-size:12.5px;
+    color:var(--ink-faint);
+    padding:30px 4px;
+    text-align:center;
+    border:1px dashed var(--card-border);
+  }
+
+  .sample-warning{
+    font-family:'IBM Plex Mono',monospace;
+    font-size:11.5px;
+    color:var(--stamp-red);
+    border:1px solid var(--stamp-red);
+    padding:10px 14px;
+    margin-bottom:18px;
+    background:rgba(178,58,46,0.05);
+  }
+
+  a{color:var(--ink); text-decoration-color:var(--ink-faint);}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="masthead">
+    <div>
+      <p class="eyebrow">Florida Lottery &middot; Fantasy 5 &middot; 5-of-36</p>
+      <h1>Backtest Lab <span class="version-badge" id="versionBadge">v1.4</span></h1>
+    </div>
+    <div class="masthead-right">
+      WALK&#8209;FORWARD AUDIT<br>
+      NO FUTURE DATA LEAKAGE<br>
+      REPORTED AGAINST CHANCE
+    </div>
+  </div>
+  <p class="subhead">An honest test of whether any numbers-picking method beats pure chance on real Fantasy&nbsp;5 draws &mdash; and a look at why an "80%" claim is easier to manufacture than to earn.</p>
+
+  <!-- SECTION 1: DATA INPUT -->
+  <div class="section">
+    <div class="section-label">
+      <span class="section-num">01</span>
+      <span class="section-title">Load draw history</span>
+      <span class="section-line"></span>
+    </div>
+    <div class="panel">
+      <label class="field-label" for="drawInput">Paste past winning numbers (one draw per line)</label>
+      <textarea id="drawInput" spellcheck="false" placeholder="08/23/2026, 16 17 24 25 29&#10;08/22/2026, 9 18 19 23 26&#10;08/21/2026, 3 14 17 27 32&#10;...paste as many rows as you have, oldest or newest first &mdash; order doesn't matter"></textarea>
+      <p class="hint">Accepts almost any layout with a date and 5 numbers per line, e.g. <code>07/05/26,19,27,32,34,35</code> or <code>2026-07-05  EVENING  19 27 32 34 35</code>. Get full history from the Florida Lottery's <a href="https://www.flalottery.com/fantasy5" target="_blank" rel="noopener">official results archive</a> or a CSV export from a results-tracking site &mdash; copy the whole table and paste it in. <b>For a meaningful test you'll want several hundred draws</b> (a year or more); the demo below is far too small to prove anything and is only here to show how the tool works. Whatever you paste here is saved automatically as you type, so it's still here next time you open this page.</p>
+      <div class="btn-row">
+        <button id="loadSampleBtn">Load demo sample (16 real draws)</button>
+        <button id="clearBtn">Clear</button>
+        <label class="field-label" style="display:inline;margin:0 4px 0 12px;">Hit counts as</label>
+        <select id="thresholdSelect">
+          <option value="1">&ge; 1 of 5 numbers matched</option>
+          <option value="2">&ge; 2 of 5 numbers matched</option>
+          <option value="3">&ge; 3 of 5 numbers matched</option>
+          <option value="4">&ge; 4 of 5 numbers matched</option>
+          <option value="5">all 5 of 5 numbers matched</option>
+        </select>
+        <button id="runBtn" class="primary" disabled>Run backtest</button>
+        <span id="statusLine" class="status-line"></span>
+        <span id="savedTag" style="font-family:'IBM Plex Mono',monospace; font-size:10.5px; letter-spacing:.06em; text-transform:uppercase; color:var(--stamp-green); opacity:0; transition:opacity .3s;"></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- SECTION 2: BASELINE -->
+  <div class="section" id="baselineSection" style="display:none;">
+    <div class="section-label">
+      <span class="section-num">02</span>
+      <span class="section-title">The baseline you actually have to beat</span>
+      <span class="section-line"></span>
+    </div>
+    <p>Fantasy&nbsp;5 draws 5 numbers from 1&ndash;36. If you picked 5 numbers by throwing darts, here's how often you'd match the draw by chance alone &mdash; before any "system" enters the picture.</p>
+    <div class="baseline-grid" id="baselineGrid"></div>
+    <div class="callout" id="baselineCallout"></div>
+  </div>
+
+  <!-- SECTION 3: FREQUENCY -->
+  <div class="section" id="frequencySection" style="display:none;">
+    <div class="section-label">
+      <span class="section-num">03</span>
+      <span class="section-title">Number frequency &mdash; and the pick it produces</span>
+      <span class="section-line"></span>
+    </div>
+    <p>How often each number has come up across every draw you've loaded, and the 5 numbers that approach picks as a result: simply the 5 that have appeared most.</p>
+    <div id="freqChart"></div>
+    <div class="callout" id="freqCallout"></div>
+  </div>
+
+  <!-- SECTION 4: CALENDAR PATTERNS -->
+  <div class="section" id="calendarSection" style="display:none;">
+    <div class="section-label">
+      <span class="section-num">04</span>
+      <span class="section-title">Calendar patterns</span>
+      <span class="section-line"></span>
+    </div>
+    <p>Two exploratory looks at whether the calendar itself carries any signal &mdash; whether numbers behave differently depending on the day-of-month they were drawn, or the day-of-week itself, across every month and year loaded. The backtested strategies built from each are scored properly in Section 05; this section just shows the raw shape of the data behind them.</p>
+
+    <p class="panel-subhead">Day of month, every month and year combined</p>
+    <div id="domChart"></div>
+    <div class="callout" id="domCallout"></div>
+
+    <p class="panel-subhead" style="margin-top:28px;">Day of week (with the month breakdown alongside, for reference)</p>
+    <div id="dowChart"></div>
+    <div id="monthDowHeatmap" style="margin-top:14px;"></div>
+    <div class="callout" id="dowCallout"></div>
+  </div>
+
+  <!-- SECTION 5: STRATEGIES -->
+  <div class="section" id="strategySection" style="display:none;">
+    <div class="section-label">
+      <span class="section-num">05</span>
+      <span class="section-title">Strategies under test</span>
+      <span class="section-line"></span>
+    </div>
+    <div id="sampleWarning"></div>
+    <div class="strategy-grid" id="strategyGrid"></div>
+  </div>
+
+  <div class="section" id="emptySection">
+    <div class="empty-state">Paste draw history above, then run the backtest &mdash; results will populate this page.</div>
+  </div>
+
+  <!-- METHODOLOGY -->
+  <div class="method-note">
+    <h4>How the test works</h4>
+    <p>For every draw after an initial warm-up window, each strategy computes its 5-number pick using <b>only draws that happened before it</b> &mdash; it never sees the draw it's being tested against. That prediction is then checked against the real result, and the outcome is logged. This repeats across the full history, so each strategy is scored on hundreds of genuinely out-of-sample predictions, not a single lucky guess.</p>
+    <h4>Why 95% confidence intervals</h4>
+    <p>A hit rate from a few dozen draws can swing widely by luck alone. The Wilson interval shown under each strategy is the range its true long-run hit rate plausibly falls in, given the sample size. If that range comfortably contains the theoretical chance baseline, the strategy hasn't shown evidence of doing anything but guessing &mdash; regardless of what the headline percentage says.</p>
+    <h4>On "80% accuracy" claims</h4>
+    <p>Fantasy 5 drawings are independent random events with no memory of prior draws; nothing in the historical sequence carries information about the next one. Any method that reports beating chance on historical data is almost always <b>overfit</b> &mdash; tuned until it happens to fit the noise in that specific dataset &mdash; and that fit does not carry forward to future draws. Testing enough strategies (or enough variations of one) against the same fixed history means some will clear an arbitrary bar by chance alone; that's what this tool guards against by comparing every result to the real mathematical baseline, not to zero.</p>
+  </div>
+
+</div>
+
+<script>
+(function(){
+  // Bump this on every revision — the changelog comment in <head> tracks what changed.
+  // The masthead badge is set from this value on load, so it only needs updating here.
+  const APP_VERSION = 'v1.6';
+  document.addEventListener('DOMContentLoaded', ()=>{
+    const badge = document.getElementById('versionBadge');
+    if(badge) badge.textContent = APP_VERSION;
+  });
+
+  const POOL = 36, DRAWSIZE = 5;
+
+  // ---------- combinatorics / baseline math ----------
+  function nCr(n,r){
+    if(r<0||r>n) return 0;
+    r = Math.min(r, n-r);
+    let num=1, den=1;
+    for(let i=0;i<r;i++){ num*= (n-i); den*= (i+1); }
+    return num/den;
+  }
+  const C365 = nCr(POOL,DRAWSIZE); // C(36,5)
+  function probExactlyK(k){
+    return (nCr(DRAWSIZE,k)*nCr(POOL-DRAWSIZE,DRAWSIZE-k))/C365;
+  }
+  function probAtLeastK(k){
+    let s=0;
+    for(let j=k;j<=DRAWSIZE;j++) s+=probExactlyK(j);
+    return s;
+  }
+  const expectedMatches = DRAWSIZE*DRAWSIZE/POOL; // E[overlap]
+
+  // ---------- Wilson score interval ----------
+  function wilson(x,n,z=1.96){
+    if(n===0) return {p:0, lo:0, hi:1};
+    const phat = x/n;
+    const denom = 1+(z*z)/n;
+    const centre = (phat + (z*z)/(2*n))/denom;
+    const adj = z*Math.sqrt((phat*(1-phat)/n) + (z*z)/(4*n*n))/denom;
+    return {p:phat, lo:Math.max(0,centre-adj), hi:Math.min(1,centre+adj)};
+  }
+  // shared verdict sentence used by the frequency panel and both calendar
+  // panels, so every "here's the pick, here's whether it works" callout
+  // reads consistently and pulls from the same properly-backtested numbers
+  function strategyVerdictSentence(result, threshold, baselineForThreshold, actionText){
+    if(result.tested < 20) return `There isn't enough out-of-sample history yet to say whether this beats chance.`;
+    const hits = result.matchCounts.slice(threshold).reduce((a,b)=>a+b,0);
+    const w = wilson(hits, result.tested);
+    const beats = w.lo > baselineForThreshold;
+    const below = w.hi < baselineForThreshold;
+    const rateStr = `<b>${(w.p*100).toFixed(1)}%</b>`;
+    const ciStr = `(95% CI ${(w.lo*100).toFixed(1)}\u2013${(w.hi*100).toFixed(1)}%)`;
+    const baseStr = `${(baselineForThreshold*100).toFixed(1)}%`;
+    const matchWord = `&ge;${threshold} number${threshold===1?'':'s'}`;
+    if(beats){
+      return `In the walk-forward backtest, ${actionText} matched ${matchWord} ${rateStr} of the time ${ciStr} \u2014 above the ${baseStr} chance baseline. With a sample this size that's still plausibly noise rather than a confirmed edge (see the matching strategy card below for the full picture).`;
+    } else if(below){
+      return `In the walk-forward backtest, ${actionText} matched ${matchWord} ${rateStr} of the time \u2014 at or below the ${baseStr} you'd expect from pure chance. This hasn't outperformed guessing on this data.`;
+    }
+    return `In the walk-forward backtest, ${actionText} matched ${matchWord} ${rateStr} of the time, statistically indistinguishable from the ${baseStr} chance baseline ${ciStr}. This hasn't outperformed guessing on this data.`;
+  }
+
+  // ---------- sample data ----------
+  const SAMPLE = [
+"2026-02-18, 5 21 29 31 32",
+"2026-07-02, 1 4 5 10 23",
+"2026-07-03, 7 11 13 21 26",
+"2026-07-03, 3 14 31 32 33",
+"2026-07-04, 12 17 21 24 31",
+"2026-07-04, 13 19 22 23 28",
+"2026-07-05, 1 8 16 30 31",
+"2026-07-05, 19 27 32 34 35",
+"2026-07-06, 2 9 20 28 29",
+"2026-07-18, 2 12 16 17 28",
+"2026-08-20, 6 12 14 18 20",
+"2026-08-21, 6 8 17 21 30",
+"2026-08-21, 3 14 17 27 32",
+"2026-08-22, 1 7 9 17 24",
+"2026-08-22, 9 18 19 23 26",
+"2026-08-23, 16 17 24 25 29"
+  ].join("\n");
+
+  // ---------- parsing ----------
+  // Parses a date substring into {year, month(1-12), day} without going through
+  // Date.parse — Date.parse's handling of non-ISO strings and of local-timezone
+  // offsets is unreliable, and the two calendar tests below depend on getting the
+  // literal day-of-month / weekday exactly right for every parsed draw.
+  function parseDateParts(dateStr){
+    let m = dateStr.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+    if(m) return {year:+m[1], month:+m[2], day:+m[3]};
+    m = dateStr.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+    if(m){
+      let year = +m[3];
+      if(year<100) year += (year<70?2000:1900);
+      return {year, month:+m[1], day:+m[2]};
+    }
+    return null;
+  }
+  function parseDraws(text){
+    const lines = text.split(/\r?\n/).map(l=>l.trim()).filter(Boolean);
+    const draws = [];
+    const errors = [];
+    for(const line of lines){
+      const dateMatch = line.match(/\d{4}-\d{1,2}-\d{1,2}|\d{1,2}\/\d{1,2}\/\d{2,4}/);
+      const nums = (line.match(/\d+/g)||[]).map(Number).filter(n=>n>=1 && n<=POOL);
+      // remove date-derived numbers from candidate pool by taking the LAST 5 valid-range numbers on the line
+      let picks = nums;
+      if(dateMatch){
+        // strip date substring, re-extract numbers from remainder to avoid date digits colliding with 1-36 range
+        const rest = line.replace(dateMatch[0],"");
+        picks = (rest.match(/\d+/g)||[]).map(Number).filter(n=>n>=1 && n<=POOL);
+      }
+      if(picks.length < DRAWSIZE){ if(line.length>2) errors.push(line); continue; }
+      picks = picks.slice(0,DRAWSIZE);
+      const uniq = Array.from(new Set(picks));
+      if(uniq.length !== DRAWSIZE){ errors.push(line); continue; }
+      const dateStr = dateMatch ? dateMatch[0] : null;
+      const parts = dateStr ? parseDateParts(dateStr) : null;
+      let ts=null, day=null, month=null, year=null, dow=null;
+      if(parts){
+        ts = Date.UTC(parts.year, parts.month-1, parts.day);
+        day = parts.day; month = parts.month; year = parts.year;
+        dow = new Date(ts).getUTCDay(); // 0=Sun .. 6=Sat, computed in UTC so it never shifts with the viewer's local timezone
+      }
+      draws.push({ dateStr, ts, day, month, year, dow, nums: uniq.slice().sort((a,b)=>a-b) });
+    }
+    return {draws, errors};
+  }
+
+  // ---------- strategies ----------
+  function freqCount(history){
+    const f = new Array(POOL+1).fill(0);
+    for(const d of history) for(const n of d.nums) f[n]++;
+    return f;
+  }
+  function lastSeenIndex(history){
+    const last = new Array(POOL+1).fill(-1);
+    history.forEach((d,i)=>{ for(const n of d.nums) last[n]=i; });
+    return last;
+  }
+  function topN(scoresArr, n, ascending){
+    const idx = [];
+    for(let i=1;i<=POOL;i++) idx.push(i);
+    idx.sort((a,b)=> ascending ? (scoresArr[a]-scoresArr[b]) || (a-b) : (scoresArr[b]-scoresArr[a]) || (a-b));
+    return idx.slice(0,n).sort((a,b)=>a-b);
+  }
+  // min-max normalize an array indexed 1..POOL to the 0..1 range, so scores
+  // from different strategies (raw counts vs. decayed weights) can be blended fairly
+  function normalize(arr){
+    const vals = arr.slice(1, POOL+1);
+    const min = Math.min(...vals), max = Math.max(...vals);
+    const range = (max-min) || 1;
+    const out = new Array(arr.length).fill(0);
+    for(let i=1;i<=POOL;i++) out[i] = (arr[i]-min)/range;
+    return out;
+  }
+  function computeRecencyWeights(history){
+    const w = new Array(POOL+1).fill(0);
+    const n = history.length;
+    history.forEach((d,i)=>{
+      const age = n-1-i;
+      const weight = Math.exp(-age/40);
+      for(const num of d.nums) w[num]+=weight;
+    });
+    return w;
+  }
+  let rngState = 88172645463325252n;
+  function xorshift(){
+    rngState ^= rngState << 13n; rngState &= 0xFFFFFFFFFFFFFFFFn;
+    rngState ^= rngState >> 7n;
+    rngState ^= rngState << 17n; rngState &= 0xFFFFFFFFFFFFFFFFn;
+    return Number(rngState % 1000000n)/1000000;
+  }
+  function randomPick(){
+    const chosen = new Set();
+    while(chosen.size<DRAWSIZE){ chosen.add(1+Math.floor(xorshift()*POOL)); }
+    return Array.from(chosen).sort((a,b)=>a-b);
+  }
+
+  const STRATEGIES = [
+    {
+      id:'random',
+      name:'Random control',
+      method:'Picks 5 numbers uniformly at random, ignoring all history. This is the control group every other strategy must beat.',
+      run: (history)=> randomPick()
+    },
+    {
+      id:'hot',
+      name:'Hot numbers',
+      method:'Picks the 5 numbers drawn most often so far in the history, on the theory that frequent numbers keep coming up.',
+      run: (history)=> topN(freqCount(history), DRAWSIZE, false)
+    },
+    {
+      id:'cold',
+      name:'Cold numbers',
+      method:'Picks the 5 numbers drawn least often so far, on the theory that under-represented numbers are "due" to balance out.',
+      run: (history)=> topN(freqCount(history), DRAWSIZE, true)
+    },
+    {
+      id:'overdue',
+      name:'Longest overdue',
+      method:'Picks the 5 numbers with the longest gap since they last appeared, a common "due number" heuristic.',
+      run: (history)=>{
+        const last = lastSeenIndex(history);
+        const gap = new Array(POOL+1).fill(0);
+        for(let n=1;n<=POOL;n++) gap[n] = last[n]===-1 ? history.length+1 : (history.length-1-last[n]);
+        return topN(gap, DRAWSIZE, false);
+      }
+    },
+    {
+      id:'recency',
+      name:'Recency-weighted',
+      method:'Weights each past appearance by how recent it was (exponential decay) and picks the 5 highest-weighted numbers.',
+      run: (history)=> topN(computeRecencyWeights(history), DRAWSIZE, false)
+    },
+    {
+      id:'blended',
+      name:'Blended: Hot 40 / Cold 20 / Recency 40',
+      method:'Combines three heuristics into one score per number \u2014 40% weight on how often it has been drawn, 20% weight on how rarely it has been drawn (inverted), and 40% weight on how recently it has appeared \u2014 then picks the 5 highest-scoring numbers.',
+      run: (history)=>{
+        const freq = freqCount(history);
+        const hotNorm = normalize(freq);
+        const coldNorm = new Array(POOL+1).fill(0);
+        for(let i=1;i<=POOL;i++) coldNorm[i] = 1 - hotNorm[i];
+        const recNorm = normalize(computeRecencyWeights(history));
+        const blended = new Array(POOL+1).fill(0);
+        for(let i=1;i<=POOL;i++){
+          blended[i] = 0.40*hotNorm[i] + 0.20*coldNorm[i] + 0.40*recNorm[i];
+        }
+        return topN(blended, DRAWSIZE, false);
+      }
+    },
+    {
+      id:'domSeasonal',
+      name:'Day-of-month seasonal',
+      method:'For the draw being predicted, looks only at past draws that fell on the same day-of-month (e.g. every 14th, across every month and year loaded) and picks the 5 most frequent numbers within that subset. Falls back to the full history when too few same-day draws exist yet.',
+      run: (history, targetDraw)=>{
+        if(!targetDraw || targetDraw.day==null) return topN(freqCount(history), DRAWSIZE, false);
+        const sameDay = history.filter(d=>d.day===targetDraw.day);
+        const pool = sameDay.length>=8 ? sameDay : history;
+        return topN(freqCount(pool), DRAWSIZE, false);
+      }
+    },
+    {
+      id:'dowSeasonal',
+      name:'Day-of-week seasonal',
+      method:'For the draw being predicted, looks at every past draw that fell on the same weekday \u2014 e.g. every Monday, across all months and years loaded \u2014 and picks the 5 most frequent numbers within that subset. Falls back to the full history when too few same-weekday draws exist yet.',
+      run: (history, targetDraw)=>{
+        if(!targetDraw || targetDraw.dow==null) return topN(freqCount(history), DRAWSIZE, false);
+        const sameDow = history.filter(d=>d.dow===targetDraw.dow);
+        const pool = sameDow.length>=8 ? sameDow : history;
+        return topN(freqCount(pool), DRAWSIZE, false);
+      }
+    }
+  ];
+
+  // ---------- backtest engine ----------
+  function backtest(draws, strategy, warmup){
+    const matchCounts = new Array(DRAWSIZE+1).fill(0);
+    let tested = 0, sumMatches = 0;
+    for(let i=warmup;i<draws.length;i++){
+      const history = draws.slice(0,i);
+      const targetDraw = draws[i];
+      // targetDraw is passed for its calendar fields ONLY (day/month/dow) — its
+      // nums are never exposed to strategy.run, so this still can't leak the answer.
+      const pred = strategy.run(history, targetDraw);
+      const actual = targetDraw.nums;
+      const predSet = new Set(pred);
+      let m = 0;
+      for(const num of actual) if(predSet.has(num)) m++;
+      matchCounts[m]++;
+      sumMatches += m;
+      tested++;
+    }
+    return {matchCounts, tested, sumMatches};
+  }
+
+  // ---------- rendering ----------
+  const drawInput = document.getElementById('drawInput');
+  const statusLine = document.getElementById('statusLine');
+  const runBtn = document.getElementById('runBtn');
+  const thresholdSelect = document.getElementById('thresholdSelect');
+
+  const STORAGE_KEY = 'fantasy5-draws-csv';
+  let saveTimer = null;
+
+  async function saveDrawsToStorage(text){
+    try{
+      await window.storage.set(STORAGE_KEY, text, false);
+      statusLine.classList.add('status-line');
+      const savedTag = document.getElementById('savedTag');
+      if(savedTag){
+        savedTag.textContent = 'saved';
+        savedTag.style.opacity = '1';
+        clearTimeout(savedTag._fade);
+        savedTag._fade = setTimeout(()=>{ savedTag.style.opacity='0'; }, 1500);
+      }
+    }catch(err){
+      console.error('Storage save failed:', err);
+    }
+  }
+
+  function scheduleSave(){
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(()=>{ saveDrawsToStorage(drawInput.value); }, 900);
+  }
+
+  async function loadDrawsFromStorage(){
+    try{
+      const result = await window.storage.get(STORAGE_KEY, false);
+      if(result && result.value){
+        drawInput.value = result.value;
+        validateInput();
+      }
+    }catch(err){
+      // no saved data yet, or storage unavailable — fine, start empty
+    }
+  }
+
+  document.getElementById('loadSampleBtn').addEventListener('click', ()=>{
+    drawInput.value = SAMPLE;
+    validateInput();
+    scheduleSave();
+  });
+  document.getElementById('clearBtn').addEventListener('click', async ()=>{
+    drawInput.value='';
+    validateInput();
+    document.getElementById('baselineSection').style.display='none';
+    document.getElementById('frequencySection').style.display='none';
+    document.getElementById('calendarSection').style.display='none';
+    document.getElementById('strategySection').style.display='none';
+    document.getElementById('emptySection').style.display='block';
+    try{ await window.storage.delete(STORAGE_KEY, false); }catch(err){ /* nothing saved, fine */ }
+  });
+  drawInput.addEventListener('input', ()=>{ validateInput(); scheduleSave(); });
+  thresholdSelect.addEventListener('change', ()=>{ if(lastParsed) render(lastParsed); });
+
+  loadDrawsFromStorage();
+
+  let lastParsed = null;
+
+  function validateInput(){
+    const {draws, errors} = parseDraws(drawInput.value);
+    if(draws.length===0){
+      statusLine.textContent = '';
+      runBtn.disabled = true;
+      return;
+    }
+    let msg = `${draws.length} draw${draws.length===1?'':'s'} parsed`;
+    if(errors.length) msg += ` &middot; ${errors.length} line${errors.length===1?'':'s'} skipped`;
+    statusLine.innerHTML = msg;
+    statusLine.className = 'status-line ok';
+    runBtn.disabled = draws.length < 12;
+    if(draws.length>0 && draws.length<12){
+      statusLine.innerHTML += ' &middot; need at least 12 to run';
+      statusLine.className = 'status-line err';
+    }
+  }
+
+  document.getElementById('runBtn').addEventListener('click', ()=>{
+    const {draws} = parseDraws(drawInput.value);
+    // sort chronologically if dates are parseable; otherwise keep input order (oldest first assumed)
+    const haveDates = draws.every(d=>d.ts!==null);
+    if(haveDates) draws.sort((a,b)=>a.ts-b.ts);
+    lastParsed = draws;
+    render(draws);
+  });
+
+  function render(draws){
+    document.getElementById('emptySection').style.display='none';
+    document.getElementById('baselineSection').style.display='block';
+    document.getElementById('frequencySection').style.display='block';
+    document.getElementById('calendarSection').style.display='block';
+    document.getElementById('strategySection').style.display='block';
+
+    const threshold = parseInt(thresholdSelect.value,10);
+
+    // --- baseline panel ---
+    const p1 = probAtLeastK(1), p2 = probAtLeastK(2), p3 = probAtLeastK(3);
+    const grid = document.getElementById('baselineGrid');
+    grid.innerHTML = `
+      <div class="baseline-cell"><div class="k">P(&ge;1 match) by chance</div><div class="v">${(p1*100).toFixed(1)}%</div></div>
+      <div class="baseline-cell"><div class="k">P(&ge;2 match) by chance</div><div class="v">${(p2*100).toFixed(1)}%</div></div>
+      <div class="baseline-cell"><div class="k">P(&ge;3 match) by chance</div><div class="v">${(p3*100).toFixed(1)}%</div></div>
+      <div class="baseline-cell"><div class="k">Expected matches / draw</div><div class="v">${expectedMatches.toFixed(2)}</div></div>
+    `;
+    document.getElementById('baselineCallout').innerHTML =
+      `<b>Note the first number.</b> Any 5 numbers you pick already match at least one drawn number about <b>${(p1*100).toFixed(0)}% of the time</b> &mdash; from pure chance, with zero skill involved. A system that advertises "matches at least 1 number 80% of the time" would actually need to clear ${(p1*100).toFixed(0)}%, not 0%, to mean anything. This is why the bar for each strategy below is the math, not zero.`;
+
+    // --- strategies ---
+    const total = draws.length;
+    const warmup = Math.max(10, Math.min(30, Math.floor(total*0.25)));
+    const smallSample = total < 100;
+
+    const warnBox = document.getElementById('sampleWarning');
+    warnBox.innerHTML = smallSample
+      ? `<div class="sample-warning">SMALL SAMPLE &mdash; ${total} draws loaded, ${Math.max(total-warmup,0)} usable after the warm-up window. Confidence intervals will be wide and largely uninformative. Paste a year+ of history for a result worth trusting.</div>`
+      : '';
+
+    const baselineForThreshold = probAtLeastK(threshold);
+
+    // run every strategy's backtest once, keyed by id, so the frequency
+    // section and the strategy cards can both use the "hot numbers" result
+    const backtestResults = {};
+    STRATEGIES.forEach(strategy=>{
+      backtestResults[strategy.id] = backtest(draws, strategy, warmup);
+    });
+
+    // --- frequency panel ---
+    const fullFreq = freqCount(draws);
+    const top5 = topN(fullFreq, 5, false);
+    const top5Set = new Set(top5);
+    const maxFreq = Math.max(...fullFreq.slice(1));
+    const freqChart = document.getElementById('freqChart');
+    let barsHTML = '<div class="freq-chart">';
+    for(let n=1;n<=POOL;n++){
+      const h = maxFreq ? Math.max(2, Math.round((fullFreq[n]/maxFreq)*110)) : 2;
+      const isTop = top5Set.has(n);
+      barsHTML += `<div class="freq-bar-col" title="${n}: appeared ${fullFreq[n]} time${fullFreq[n]===1?'':'s'}">
+        <div class="freq-bar ${isTop?'top5':''}" style="height:${h}px"></div>
+        <div class="freq-label ${isTop?'top5':''}">${n}</div>
+      </div>`;
+    }
+    barsHTML += '</div>';
+    freqChart.innerHTML = barsHTML;
+
+    const hotResult = backtestResults['hot'];
+
+    let pickBallsHTML = '<div class="freq-pick-numbers">' +
+      top5.map(n=>`<div class="freq-pick-ball">${n}</div>`).join('') +
+      '</div>';
+
+    const freqVerdict = strategyVerdictSentence(hotResult, threshold, baselineForThreshold, 'picking the most frequent numbers this way');
+
+    document.getElementById('freqCallout').innerHTML =
+      `Based on all ${total} draws loaded, the 5 most frequent numbers are: ${pickBallsHTML}
+      ${freqVerdict}`;
+
+    // --- calendar pattern panels ---
+    const WEEKDAY_NAMES = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+    const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const datedDraws = draws.filter(d=>d.day!=null && d.dow!=null && d.month!=null);
+
+    // day-of-month bar chart
+    const domCounts = new Array(32).fill(0);
+    datedDraws.forEach(d=>{ domCounts[d.day]++; });
+    const maxDom = Math.max(...domCounts.slice(1), 1);
+    let domHTML = '<div class="freq-chart">';
+    for(let day=1;day<=31;day++){
+      const h = Math.max(2, Math.round((domCounts[day]/maxDom)*110));
+      domHTML += `<div class="freq-bar-col" title="Day ${day}: ${domCounts[day]} draw${domCounts[day]===1?'':'s'}">
+        <div class="freq-bar" style="height:${h}px"></div>
+        <div class="freq-label">${day}</div>
+      </div>`;
+    }
+    domHTML += '</div>';
+    document.getElementById('domChart').innerHTML = domHTML;
+
+    const domResult = backtestResults['domSeasonal'];
+    const domVerdict = strategyVerdictSentence(domResult, threshold, baselineForThreshold, "picking each day's most frequent same-day-of-month numbers");
+    document.getElementById('domCallout').innerHTML =
+      `${domVerdict} That test pools 31 separate day-of-month buckets \u2014 at a 95% confidence level, roughly 1&ndash;2 of them would look "unusual" purely by chance even with no real effect, so a single busy-looking bar above isn't evidence on its own.`;
+
+    // day-of-week bar chart
+    const dowCounts = new Array(7).fill(0);
+    datedDraws.forEach(d=>{ dowCounts[d.dow]++; });
+    const maxDow = Math.max(...dowCounts, 1);
+    let dowHTML = '<div class="dow-chart">';
+    for(let dow=0;dow<7;dow++){
+      const h = Math.max(2, Math.round((dowCounts[dow]/maxDow)*90));
+      dowHTML += `<div class="dow-bar-col">
+        <div class="dow-count">${dowCounts[dow]}</div>
+        <div class="dow-bar" style="height:${h}px"></div>
+        <div class="dow-label">${WEEKDAY_NAMES[dow]}</div>
+      </div>`;
+    }
+    dowHTML += '</div>';
+    document.getElementById('dowChart').innerHTML = dowHTML;
+
+    // month x weekday heatmap
+    const monthDowMatrix = Array.from({length:13}, ()=>new Array(7).fill(0));
+    datedDraws.forEach(d=>{ monthDowMatrix[d.month][d.dow]++; });
+    let maxCell = 1;
+    for(let mo=1;mo<=12;mo++) for(let dw=0;dw<7;dw++) maxCell = Math.max(maxCell, monthDowMatrix[mo][dw]);
+    let heatHTML = '<div class="heatmap">';
+    heatHTML += '<div class="heatmap-cell head"></div>';
+    WEEKDAY_NAMES.forEach(n=>{ heatHTML += `<div class="heatmap-cell head">${n}</div>`; });
+    for(let mo=1;mo<=12;mo++){
+      heatHTML += `<div class="heatmap-cell rowhead">${MONTH_NAMES[mo-1]}</div>`;
+      for(let dw=0;dw<7;dw++){
+        const c = monthDowMatrix[mo][dw];
+        const alpha = (c/maxCell*0.85).toFixed(2);
+        heatHTML += `<div class="heatmap-cell" style="background:rgba(27,42,74,${alpha}); ${c/maxCell>0.5?'color:#fff;':''}" title="${MONTH_NAMES[mo-1]} ${WEEKDAY_NAMES[dw]}: ${c} draws">${c}</div>`;
+      }
+    }
+    heatHTML += '</div>';
+    document.getElementById('monthDowHeatmap').innerHTML = heatHTML;
+
+    const dowResult = backtestResults['dowSeasonal'];
+    const dowVerdict = strategyVerdictSentence(dowResult, threshold, baselineForThreshold, 'picking the most frequent numbers for that weekday, across every month and year loaded');
+    document.getElementById('dowCallout').innerHTML =
+      `${dowVerdict} The strategy pools all draws that share a weekday (every Monday, every Tuesday, and so on) rather than narrowing to a specific month, since splitting by month as well leaves most cells in the heatmap above with only a handful of draws each &mdash; those 84 individual month&times;weekday cells are shown for reference, not as the basis for the pick.`;
+
+    const stratGrid = document.getElementById('strategyGrid');
+    stratGrid.innerHTML = '';
+
+    STRATEGIES.forEach(strategy=>{
+      const {matchCounts, tested, sumMatches} = backtestResults[strategy.id];
+      const hits = matchCounts.slice(threshold).reduce((a,b)=>a+b,0);
+      const w = wilson(hits, tested);
+      const avgMatches = tested? (sumMatches/tested) : 0;
+
+      const beatsBaseline = w.lo > baselineForThreshold;
+      const belowBaseline = w.hi < baselineForThreshold;
+      const overlapsBaseline = !beatsBaseline && !belowBaseline;
+
+      let dotClass='neutral', verdictText='Overlaps the chance baseline &mdash; no evidence of an edge.';
+      if(tested < 20){
+        dotClass='neutral'; verdictText='Too few out-of-sample draws to say anything.';
+      } else if(beatsBaseline){
+        dotClass='green'; verdictText='95% CI sits entirely above the chance baseline.';
+      } else if(overlapsBaseline){
+        dotClass='neutral'; verdictText='Overlaps the chance baseline &mdash; no evidence of an edge.';
+      } else {
+        dotClass='red'; verdictText='95% CI sits below the chance baseline.';
+      }
+
+      const card = document.createElement('div');
+      card.className = 'strategy-card';
+
+      const distMax = Math.max(...matchCounts, 1);
+      const distHTML = matchCounts.map((c,k)=>{
+        const pct = tested? (c/tested*100):0;
+        const theoryPct = probExactlyK(k)*100;
+        return `<div class="distbar-row">
+          <div class="distbar-label">${k} match${k===1?'':'es'}</div>
+          <div class="distbar-track">
+            <div class="distbar-fill" style="width:${pct}%"></div>
+            <div class="distbar-theory" style="left:${theoryPct}%" title="Theoretical chance: ${theoryPct.toFixed(1)}%"></div>
+          </div>
+          <div class="distbar-label" style="width:44px; text-align:right;">${pct.toFixed(0)}%</div>
+        </div>`;
+      }).join('');
+
+      card.innerHTML = `
+        <div class="strategy-head">
+          <div class="strategy-name">${strategy.name}</div>
+        </div>
+        <p class="strategy-method">${strategy.method}</p>
+        <div class="stat-row">
+          <div class="stat"><div class="k">Hit rate (&ge;${threshold})</div><div class="v">${tested? (w.p*100).toFixed(1):'&ndash;'}%</div><div class="sub">${hits}/${tested} draws</div></div>
+          <div class="stat"><div class="k">95% CI</div><div class="v" style="font-size:15px;">${(w.lo*100).toFixed(1)}&ndash;${(w.hi*100).toFixed(1)}%</div><div class="sub">Wilson interval</div></div>
+          <div class="stat"><div class="k">Chance baseline</div><div class="v" style="font-size:15px;">${(baselineForThreshold*100).toFixed(1)}%</div><div class="sub">hypergeometric</div></div>
+          <div class="stat"><div class="k">Avg. matches</div><div class="v" style="font-size:15px;">${avgMatches.toFixed(2)}</div><div class="sub">of 5, vs ${expectedMatches.toFixed(2)} expected</div></div>
+        </div>
+        <div class="distbar-wrap">${distHTML}</div>
+        <div class="verdict-row"><span class="dot ${dotClass}"></span><span>${verdictText}</span></div>
+      `;
+
+      if(tested>=20 && overlapsBaseline){
+        const stamp = document.createElement('div');
+        stamp.className='stamp';
+        stamp.textContent='Not significant';
+        card.appendChild(stamp);
+      } else if(tested>=20 && beatsBaseline){
+        const stamp = document.createElement('div');
+        stamp.className='stamp watch';
+        stamp.textContent='Likely sample noise';
+        card.appendChild(stamp);
+      }
+
+      stratGrid.appendChild(card);
+    });
+  }
+})();
+</script>
+</body>
+</html>
